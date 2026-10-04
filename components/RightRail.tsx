@@ -58,8 +58,8 @@ export function RightRail({
           <li>Nama asli di balik konten anonim hanya terlihat admin kelas.</li>
           <li>Balasan hanya satu tingkat, jadi percakapan tidak bercabang-cabang.</li>
         </ul>
-        <Link href="/buat" className={`${PILL_GHOST} mt-4 w-full`}>
-          Mulai posting
+        <Link href="/media" className={`${PILL_GHOST} mt-4 w-full`}>
+          Kirim gambar
         </Link>
       </section>
     </aside>

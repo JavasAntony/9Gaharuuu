@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "db:push": "supabase db push",
     "seed:users": "node scripts/seed-users.mjs",
+    "reset:content": "node scripts/reset-content.mjs",
     "test:rls": "node scripts/test-rls.mjs"
   },
   "dependencies": {

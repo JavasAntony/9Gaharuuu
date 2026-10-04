@@ -749,6 +749,195 @@ try {
     describe(studentQueue),
   );
 
+  console.log("\n6. Bans and announcements: the admin surface");
+
+  // A ban is two columns and one expression, and these assert the expression rather
+  // than the columns: a ban whose end date has passed is not a ban, and a trigger
+  // that forgets the date would keep blocking a member forever.
+  const guestPostIdForBan = crypto.randomUUID();
+  const guestPostForBan = await rest("guest_posts", {
+    method: "POST",
+    body: { id: guestPostIdForBan, content: "post tamu untuk pengujian blokir" },
+  });
+  guestFixtures.push(guestPostIdForBan);
+  check("signed out: the ban fixture is created", guestPostForBan.ok, describe(guestPostForBan));
+
+  // test_a is a plain member here; test_rls_admin is the admin.
+  const adminId = (
+    await request("/auth/v1/admin/users?per_page=1000", { key: secretKey, base: url })
+  ).body.users.find((user) => user.email === `${ADMIN}@kelaskita.local`).id;
+
+  const memberBan = await rest("rpc/blokir_akun", {
+    method: "POST",
+    token: tokenA,
+    body: { p_user_id: idB, p_sampai: null, p_alasan: "menolak" },
+  });
+  check("a student cannot ban anybody (42501)", memberBan.body?.code === "42501", describe(memberBan));
+
+  const studentPrecheck = await rest("rpc/periksa_admin", { method: "POST", token: tokenA, body: {} });
+  check("a student is refused by periksa_admin (42501)", studentPrecheck.body?.code === "42501", describe(studentPrecheck));
+
+  const memberProfiles = await rest("admin_profiles?select=id,username", { token: tokenA });
+  check(
+    "a student sees no accounts in admin_profiles",
+    memberProfiles.ok && Array.isArray(memberProfiles.body) && memberProfiles.body.length === 0,
+    describe(memberProfiles),
+  );
+
+  const adminProfiles = await rest(
+    "admin_profiles?select=id,username,role,is_banned,banned_until,ban_reason,banned_now",
+    { token: adminToken },
+  );
+  check(
+    "an admin sees the accounts with their ban state",
+    adminProfiles.ok && Array.isArray(adminProfiles.body) && adminProfiles.body.length > 0,
+    describe(adminProfiles),
+  );
+  check(
+    "banned_now is false before anybody is banned",
+    adminProfiles.ok && adminProfiles.body.every((profile) => profile.banned_now === false),
+    describe(adminProfiles),
+  );
+
+  const ban = await rest("rpc/blokir_akun", {
+    method: "POST",
+    token: adminToken,
+    body: {
+      p_user_id: idA,
+      p_sampai: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      p_alasan: "mencobak",
+    },
+  });
+  check("an admin can ban a member", ban.ok, describe(ban));
+
+  // The four member-owned write tables, all refused by the trigger. `guest_posts` is
+  // deliberately not among them: it has no author, so a ban has nothing to attach to.
+  const bannedPost = await rest("posts", {
+    method: "POST",
+    token: tokenA,
+    body: { id: crypto.randomUUID(), content: "menanggal setelah dibekukan", anonymous: false },
+  });
+  check("a banned member cannot post (42501)", bannedPost.body?.code === "42501", describe(bannedPost));
+
+  const bannedComment = await rest("comments", {
+    method: "POST",
+    token: tokenA,
+    body: {
+      id: crypto.randomUUID(),
+      post_id: guestPostIdForBan,
+      parent_comment_id: null,
+      content: "balas",
+      anonymous: false,
+    },
+  });
+  check("a banned member cannot comment (42501)", bannedComment.body?.code === "42501", describe(bannedComment));
+
+  const bannedLike = await rest("likes", {
+    method: "POST",
+    token: tokenA,
+    body: { user_id: idA, post_id: namedPostA },
+  });
+  check("a banned member cannot like (42501)", bannedLike.body?.code === "42501", describe(bannedLike));
+
+  const bannedGuestLike = await rest("guest_likes", {
+    method: "POST",
+    token: tokenA,
+    body: { user_id: idA, guest_post_id: guestPostIdForBan },
+  });
+  check("a banned member cannot guest-like (42501)", bannedGuestLike.body?.code === "42501", describe(bannedGuestLike));
+
+  const bannedRead = await rest("post_feed?select=id&limit=1", { token: tokenA });
+  check("a banned member can still read the feed", bannedRead.ok, describe(bannedRead));
+
+  const ownBan = await rest("rpc/blokir_akun", {
+    method: "POST",
+    token: adminToken,
+    body: { p_user_id: adminId, p_sampai: null, p_alasan: "mencobak" },
+  });
+  check("an admin cannot ban themselves (P0003)", ownBan.body?.code === "P0003", describe(ownBan));
+
+  const unban = await rest("rpc/buka_blokir_akun", {
+    method: "POST",
+    token: adminToken,
+    body: { p_user_id: idA, p_alasan: "sudah minta maaf" },
+  });
+  check("an admin can lift a ban", unban.ok, describe(unban));
+
+  const postAfterUnban = await rest("posts", {
+    method: "POST",
+    token: tokenA,
+    body: { id: crypto.randomUUID(), content: "setelah blokir dibuka", anonymous: false },
+  });
+  check("the member can post again", postAfterUnban.ok, describe(postAfterUnban));
+
+  // Announcements are readable without an account, because the feed is.
+  const studentAnnouncement = await rest("rpc/buat_pengumuman", {
+    method: "POST",
+    token: tokenA,
+    body: { p_judul: "dari siswa", p_isi: "tidak seharusnya" },
+  });
+  check(
+    "a student cannot publish an announcement (42501)",
+    studentAnnouncement.body?.code === "42501",
+    describe(studentAnnouncement),
+  );
+
+  const made = await rest("rpc/buat_pengumuman", {
+    method: "POST",
+    token: adminToken,
+    body: { p_judul: "Jadwal ulangan", p_isi: "Selasa depan." },
+  });
+  check("an admin can publish an announcement", made.ok, describe(made));
+  const announcementId = made.body;
+
+  const publicList = await rest("active_announcements?select=id,title,content,created_at");
+  check(
+    "the running announcement is readable while signed out",
+    publicList.ok && publicList.body.some((item) => item.id === announcementId),
+    describe(publicList),
+  );
+  check(
+    "the public view exposes neither author nor is_active",
+    publicList.ok && publicList.body.every((item) => !("author_id" in item) && !("is_active" in item)),
+    describe(publicList),
+  );
+
+  const studentManager = await rest("admin_announcements?select=id", { token: tokenA });
+  check(
+    "a student sees no announcements in the manager view",
+    studentManager.ok && Array.isArray(studentManager.body) && studentManager.body.length === 0,
+    describe(studentManager),
+  );
+
+  const archived = await rest("rpc/toggle_pengumuman", {
+    method: "POST",
+    token: adminToken,
+    body: { p_id: announcementId, p_aktif: false },
+  });
+  check("an admin can archive it", archived.ok, describe(archived));
+
+  const afterArchive = await rest("active_announcements?select=id");
+  check(
+    "an archived announcement leaves the public view",
+    afterArchive.ok && !afterArchive.body.some((item) => item.id === announcementId),
+    describe(afterArchive),
+  );
+
+  const removed = await rest("rpc/hapus_pengumuman", {
+    method: "POST",
+    token: adminToken,
+    body: { p_id: announcementId },
+  });
+  check("an admin can delete it", removed.ok, describe(removed));
+
+  const trail = await rest("admin_moderation_logs?select=action,target_type", { token: adminToken });
+  const trailActions = trail.ok ? trail.body.map((row) => row.action) : [];
+  check("the trail recorded the ban", trailActions.includes("user_ban"), JSON.stringify(trailActions));
+  check("the trail recorded the unban", trailActions.includes("user_unban"), JSON.stringify(trailActions));
+  check("the trail recorded the announcement", trailActions.includes("announcement_create"), JSON.stringify(trailActions));
+  check("the trail recorded the archive", trailActions.includes("announcement_archive"), JSON.stringify(trailActions));
+  check("the trail recorded the deletion", trailActions.includes("announcement_delete"), JSON.stringify(trailActions));
+
   console.log(`\n✓ ${passed} assertions passed.\n`);
 } catch (error) {
   // `process.exitCode` rather than `process.exit`, so the `finally` below still

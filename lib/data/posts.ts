@@ -25,6 +25,17 @@ const FEED_COLUMNS =
   "id, content, image_url, anonymous, created_at, author_name, is_mine, liked_by_me, like_count, comment_count, is_guest";
 
 /**
+ * Which feed a query is for.
+ *
+ * Not a column and not a setting: `image_url` being null *is* the distinction, so the two
+ * filters below partition every row of `post_feed` exactly once. Guest posts arrive with
+ * a null `image_url` -- the view unions them in that way, because `guest_posts` has no
+ * image column and never will -- which puts every guest post in the text feed, which is
+ * also the only one they could have written to.
+ */
+export type FeedKind = "text" | "media";
+
+/**
  * The only module that reads posts. Everything goes through the `post_feed`
  * view, because the client has no table-level SELECT on `posts` and no grant on
  * `posts.user_id`.
@@ -34,9 +45,11 @@ const FEED_COLUMNS =
  */
 export async function listFeed({
   cursor,
+  kind,
   limit = POSTS_PER_PAGE,
 }: {
   cursor?: string | undefined;
+  kind: FeedKind;
   limit?: number;
 }): Promise<FeedPage> {
   const supabase = await createClient();
@@ -47,6 +60,11 @@ export async function listFeed({
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(limit + 1);
+
+  // PostgREST ANDs a filter with the `.or()` keyset below, which is what makes the cursor
+  // mean "the next row *of this feed*".
+  query =
+    kind === "media" ? query.not("image_url", "is", null) : query.is("image_url", null);
 
   const decoded = cursor ? decodeCursor(cursor) : null;
   if (decoded) {

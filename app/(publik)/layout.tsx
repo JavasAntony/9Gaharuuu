@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AppShell } from "@/components/AppShell";
+import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 
 /**
  * Shell for the routes a signed-out visitor may reach: the feed, the composer
@@ -10,6 +11,11 @@ import { AppShell } from "@/components/AppShell";
  * one: a plain string here would replace the inherited template for every page in this
  * group, so `/feed` would be titled "Feed" while `/masuk`, outside this group, was
  * titled "Masuk · 9Gaharuuu".
+ *
+ * The announcement banner belongs to the group rather than to a page because it is
+ * class-wide: `/feed`, `/media` and a post's thread all carry it, so putting it here is
+ * what makes it impossible for one of them to show yesterday's announcement. `AppShell`
+ * renders it above this layout's children.
  */
 export const metadata: Metadata = {
   title: {
@@ -19,11 +25,11 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-/**
- * Shell for the routes a signed-out visitor may reach: the feed, the composer
- * and a post's thread. It deliberately does not call `requireUser()`; the
- * individual pages and Server Actions are what require a session.
- */
 export default function PublicLayout({ children }: LayoutProps<"/">) {
-  return <AppShell>{children}</AppShell>;
+  return (
+    <>
+      <AnnouncementBanner />
+      <AppShell>{children}</AppShell>
+    </>
+  );
 }

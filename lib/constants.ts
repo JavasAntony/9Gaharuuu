@@ -6,6 +6,21 @@ export const MAX_COMMENT_LENGTH = 1000;
 
 export const MAX_REPORT_DESCRIPTION = 1000;
 
+/** Matches `moderation_logs.reason` and `profiles.ban_reason` (migration 0017). */
+export const MAX_AUDIT_REASON_LENGTH = 500;
+
+export const MAX_ANNOUNCEMENT_TITLE_LENGTH = 120;
+export const MAX_ANNOUNCEMENT_CONTENT_LENGTH = 1000;
+
+/**
+ * The floor for a password an admin sets for somebody else.
+ *
+ * Only the length is checked, and only in the form: the Auth Admin API owns the real rules
+ * and reports its own failure, which `buatAkun` passes through. A stricter policy here
+ * would be a second opinion that can disagree with the one that decides.
+ */
+export const MIN_PASSWORD_LENGTH = 8;
+
 export const ANON_LABEL = "Anonim";
 
 /**
@@ -35,11 +50,11 @@ export const USERNAME_PATTERN = /^[a-z0-9._-]{3,24}$/;
  * live in the `(app)` route group whose layout calls `requireUser()`, and public
  * pages live in `(publik)`, which does not.
  *
- * `/feed`, `/buat` and `/post/*` are public because v2 lets a visitor post
- * anonymously. `/admin` is deliberately absent: it is guarded by the admin role
+ * `/feed`, `/media` and `/post/*` are public because v2 lets a visitor read and
+ * post anonymously. `/admin` is deliberately absent: it is guarded by the admin role
  * inside its own layout, not by being in this list.
  */
-export const PUBLIC_PATHS = ["/", "/masuk", "/feed", "/buat", "/post"];
+export const PUBLIC_PATHS = ["/", "/masuk", "/feed", "/media", "/post"];
 
 export function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));

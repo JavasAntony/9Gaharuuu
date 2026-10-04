@@ -6,50 +6,48 @@ import { formatRelativeShort, formatRelativeTime } from "@/lib/format";
 import { PageHeader } from "@/components/PageHeader";
 import { PostCard } from "@/components/PostCard";
 import { LoadMoreLink } from "@/components/LoadMoreLink";
-import { buatGuestPost, buatPost } from "@/app/actions/posts";
+import { buatGuestPost, buatPostTeks } from "@/app/actions/posts";
+import { PostComposer } from "@/components/PostComposer";
+import { EmptyFeed } from "@/components/EmptyFeed";
 import { PILL_GHOST } from "@/lib/ui";
-import { BuatForm, GuestForm } from "../buat/BuatForm";
 
 export const metadata: Metadata = { title: "Feed" };
 
+/**
+ * The text feed: words, and nothing else.
+ *
+ * `listFeed` filters on `image_url is null`, which is the same column `PostCard` reads to
+ * decide whether to draw a picture, so the query and the rendering cannot disagree about
+ * which posts belong here. Anything with a picture is on `/media` instead, and the action
+ * behind the composer below refuses a file even if one is attached to the form.
+ */
 export default async function FeedPage({ searchParams }: PageProps<"/feed">) {
   const params = await searchParams;
   const cursor = typeof params.cursor === "string" ? params.cursor : undefined;
 
-  const [{ items, nextCursor }, user] = await Promise.all([listFeed({ cursor }), getCurrentUser()]);
+  const [{ items, nextCursor }, user] = await Promise.all([
+    listFeed({ cursor, kind: "text" }),
+    getCurrentUser(),
+  ]);
 
   return (
     <main>
       <PageHeader
         title="Feed kelas"
         action={
-          <Link href="/buat" className={PILL_GHOST}>
-            Buat
+          <Link href="/media" className={PILL_GHOST}>
+            Media
           </Link>
         }
       />
 
-      {/* The composer sits above the timeline rather than on its own route, so the
-          common move -- read, then answer -- never needs a page change. The rail's
-          "Posting baru" button is the deliberate route to `/buat` for anyone who
-          wants the full-page composer instead. */}
-      {user ? (
-        <BuatForm action={buatPost} variant="inline" />
-      ) : (
-        <GuestForm action={buatGuestPost} variant="inline" />
-      )}
+      {/* The composer sits above the timeline rather than on its own route, so the common
+          move -- read, then answer -- never needs a page change. `/media` is the
+          deliberate route to the other feed for anyone who wants to send a picture. */}
+      <PostComposer action={user ? buatPostTeks : buatGuestPost} guest={!user} />
 
       {items.length === 0 ? (
-        <div className="px-6 py-16 text-center">
-          <p className="text-base font-bold">
-            {cursor ? "Sudah sampai ujungnya." : "Belum ada apa-apa di sini."}
-          </p>
-          <p className="mt-1 text-sm leading-relaxed text-muted">
-            {cursor
-              ? "Tidak ada posting lagi setelah ini."
-              : "Mulai percakapan dulu. Bisa juga tanpa akun."}
-          </p>
-        </div>
+        <EmptyFeed kind="text" hasCursor={Boolean(cursor)} />
       ) : (
         <div>
           {items.map((post) => (

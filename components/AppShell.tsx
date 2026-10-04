@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { getCurrentUser } from "@/lib/auth";
 import { navItems } from "@/lib/nav";
+import { BanBanner } from "@/components/BanBanner";
 import { BottomNav } from "@/components/BottomNav";
 import { RightRail } from "@/components/RightRail";
 import { SideNav } from "@/components/SideNav";
@@ -18,6 +19,10 @@ import { TopBar } from "@/components/TopBar";
  * It reads the session to decide whether to offer Masuk or Akun and whether to
  * show the Admin tab. None of that is access control; the layouts and the
  * database enforce who may actually see what.
+ *
+ * `BanBanner` is here rather than in each page because a frozen member needs one
+ * answer on every screen: the session is read above, so a ban shows up wherever
+ * they are instead of only where a composer happens to be.
  *
  * `suppressHydrationWarning` is on both wrappers, not on `<body>` alone, because
  * React applies the flag one element deep only: setting it on `<body>` silences a
@@ -41,6 +46,7 @@ export async function AppShell({ children }: { children: ReactNode }) {
         className="flex min-h-dvh min-w-0 flex-1 flex-col border-line lg:max-w-[600px] lg:border-x"
       >
         <TopBar isSignedIn={Boolean(user)} />
+        {user ? <BanBanner user={user} /> : null}
         {/* Room for the fixed bottom bar on mobile; the desktop rail needs none. */}
         <div className="flex-1 pb-20 lg:pb-0">{children}</div>
       </div>

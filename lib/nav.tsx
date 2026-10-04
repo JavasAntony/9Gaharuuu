@@ -22,9 +22,11 @@ const ICONS = {
       <path d="M4 5h16M4 10h16M4 15h10M4 20h7" strokeLinecap="round" />
     </svg>
   ),
-  compose: (
+  media: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} aria-hidden="true">
-      <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
+      <circle cx="9" cy="10" r="1.5" />
+      <path d="M4.5 17.5l4.7-4.7a1.6 1.6 0 0 1 2.3 0l3.5 3.5 1.9-1.9a1.6 1.6 0 0 1 2.3 0l2.3 2.3" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
   account: (
@@ -66,14 +68,18 @@ export function Brand({ compact = false }: { compact?: boolean }) {
 }
 
 /**
- * Feed and composer are always offered, because v2 lets a visitor read and post
- * without an account. The third tab is the session: Akun when signed in, Masuk
- * when not. The Admin tab appears for an admin only.
+ * The two feeds are always offered, because both are readable without an account. The third
+ * tab is the session: Akun when signed in, Masuk when not. The Admin tab appears for an admin
+ * only.
+ *
+ * Media is a tab rather than a button inside the text feed on purpose: the two lists are
+ * genuinely different reading, and a tab is the one control that says "there is another one
+ * of these" without anyone having to know what the other one is for.
  */
 export function navItems(isSignedIn: boolean, isAdmin: boolean): NavItem[] {
   const items: NavItem[] = [
     { href: "/feed", label: "Feed", icon: ICONS.feed },
-    { href: "/buat", label: "Buat", icon: ICONS.compose },
+    { href: "/media", label: "Media", icon: ICONS.media },
     {
       href: isSignedIn ? "/akun" : "/masuk",
       label: isSignedIn ? "Akun" : "Masuk",

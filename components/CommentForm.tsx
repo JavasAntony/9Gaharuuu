@@ -9,7 +9,7 @@ import { ImageUpload, useImageAttachment } from "./ImageUpload";
 import { FieldError, FormMessage } from "./form-controls";
 import { Spinner } from "./Spinner";
 import { PILL_PRIMARY } from "@/lib/ui";
-import { EMPTY_POST_MESSAGE } from "@/lib/validation";
+import { EMPTY_COMMENT_MESSAGE } from "@/lib/validation";
 import { type ActionState } from "@/lib/action-state";
 
 const INITIAL: ActionState = {};
@@ -95,7 +95,7 @@ function Composer({
   const canSend = allowAnonymous
     ? content.trim().length > 0 || image.attachment.file !== null
     : content.length > 0;
-  const emptyError = allowAnonymous && attempted && !canSend ? EMPTY_POST_MESSAGE : null;
+  const emptyError = allowAnonymous && attempted && !canSend ? EMPTY_COMMENT_MESSAGE : null;
 
   // Same lock as the post composer, and for the same reason: a reply that fires twice is
   // two replies, and this form has one row and no id of its own to deduplicate with.

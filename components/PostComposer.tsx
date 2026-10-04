@@ -10,60 +10,52 @@ import { ImageUpload, useImageAttachment } from "@/components/ImageUpload";
 import { FieldError, FormMessage } from "@/components/form-controls";
 import { Spinner } from "@/components/Spinner";
 import { PILL_PRIMARY } from "@/lib/ui";
-import { EMPTY_POST_MESSAGE } from "@/lib/validation";
+import { EMPTY_MEDIA_MESSAGE } from "@/lib/validation";
 import { type ActionState } from "@/lib/action-state";
 
 const INITIAL: ActionState = {};
 
-type PostAction = (state: ActionState, formData: FormData) => Promise<ActionState>;
+/**
+ * Which feed this composer writes to, and therefore what it will accept.
+ *
+ * The two are opposites, and the point of the split is that a control cannot be present
+ * where its rule would reject it: `text` renders no image picker at all, and `media`
+ * cannot be sent without one. Each Server Action refuses the other mode's format as well,
+ * so this is the difference between a rule that is explained and one that is merely
+ * enforced.
+ */
+export type PostMode = "text" | "media";
 
 /**
- * `inline` is the composer at the top of the feed -- bare, no card around it, so
- * the timeline starts immediately under it. `card` is the same form given its own
- * page at `/buat`.
+ * `inline` is the composer at the top of a feed -- bare, no card around it, so the
+ * timeline starts immediately under it. `card` is the same form given its own room on a
+ * compose page, where it is the only thing on screen.
  */
 export type ComposerVariant = "inline" | "card";
 
-/** Composer for a signed-in member: named or anonymous, as before. */
-export function BuatForm({
-  action,
-  variant = "card",
-}: {
-  action: PostAction;
-  variant?: ComposerVariant;
-}) {
-  const [state, formAction, isSubmitting] = useActionState(action, INITIAL);
-
-  return (
-    <Composer
-      key={state.successToken ?? "editing"}
-      formAction={formAction}
-      isSubmitting={isSubmitting}
-      state={state}
-      max={MAX_POST_LENGTH}
-      name="kamu"
-      isGuest={false}
-      variant={variant}
-      rows={variant === "inline" ? 2 : 5}
-    >
-      <AnonymousToggle compact />
-    </Composer>
-  );
-}
-
 /**
- * Composer for a signed-out visitor.
+ * The post composer, for both feeds and both audiences.
  *
- * There is no identity toggle and no image field to disable, because the guest
- * write path accepts exactly two columns, neither of which is an identity or a
- * file. The notice tells the visitor what signing in would add, rather than
- * hiding the limit behind a disabled control.
+ * One component with the audience and the feed as props, rather than four near-copies: the
+ * submit lock, the compression state, the busy label and the draft-preserving error path
+ * are the same code in every case, and a bug fixed in one copy would not be fixed in the
+ * others.
+ *
+ * `guest` is not a shortcut for `mode="text"` that callers have to remember.
+ * `guest_posts` grants INSERT on `(id, content)` and has no image column, so a guest
+ * cannot write to the media feed at all -- the mode is coerced below rather than trusting
+ * two props to agree, and `/media` does not render this component for a signed-out visitor
+ * anyway.
  */
-export function GuestForm({
+export function PostComposer({
   action,
-  variant = "card",
+  mode = "text",
+  guest = false,
+  variant = "inline",
 }: {
-  action: PostAction;
+  action: (state: ActionState, formData: FormData) => Promise<ActionState>;
+  mode?: PostMode;
+  guest?: boolean;
   variant?: ComposerVariant;
 }) {
   const [state, formAction, isSubmitting] = useActionState(action, INITIAL);
@@ -74,27 +66,10 @@ export function GuestForm({
       formAction={formAction}
       isSubmitting={isSubmitting}
       state={state}
-      max={MAX_GUEST_POST_LENGTH}
-      name="tamu"
-      isGuest
+      mode={guest ? "text" : mode}
+      guest={guest}
       variant={variant}
-      rows={variant === "inline" ? 2 : 5}
-    >
-      {variant === "inline" ? (
-        <p className="text-xs text-muted">
-          Tanpa akun, jadi anonim.{" "}
-          <Link href="/masuk" className="text-accent underline underline-offset-4">
-            Masuk
-          </Link>{" "}
-          untuk memakai nama dan menyimpan suka.
-        </p>
-      ) : (
-        <p className="text-xs text-muted">
-          Posting tamu bersifat anonim dan hanya teks. Masuk untuk memakai nama, dan untuk
-          meng—like, berkomentar, serta mengelola laporan.
-        </p>
-      )}
-    </Composer>
+    />
   );
 }
 
@@ -102,38 +77,39 @@ function Composer({
   formAction,
   isSubmitting,
   state,
-  max,
-  name,
-  isGuest,
+  mode,
+  guest,
   variant,
-  rows,
-  children,
 }: {
   formAction: (formData: FormData) => void;
   isSubmitting: boolean;
   state: ActionState;
-  max: number;
-  name: string;
-  isGuest: boolean;
+  mode: PostMode;
+  guest: boolean;
   variant: ComposerVariant;
-  rows: number;
-  children: React.ReactNode;
 }) {
   const [content, setContent] = useState("");
   const [attempted, setAttempted] = useState(false);
   const image = useImageAttachment();
-  const remaining = max - content.length;
   const inline = variant === "inline";
-  const compressing = image.attachment.status === "compressing";
+  const media = mode === "media";
 
-  // A guest's post is text only, so an empty box is just not a post yet. A member's post
-  // is a box or a picture or both, which is why the button stays live with nothing typed.
-  // `trim` because the Server Action trims too: a caption of only spaces is no caption.
-  const canSend = isGuest ? content.length > 0 : content.trim().length > 0 || image.attachment.file !== null;
-  const emptyError = !isGuest && attempted && !canSend ? EMPTY_POST_MESSAGE : null;
+  const max = guest ? MAX_GUEST_POST_LENGTH : MAX_POST_LENGTH;
+  const remaining = max - content.length;
+
+  // The media feed's readiness is the picture; the text feed's is the words. `trim`
+  // because the action trims too: a caption of only spaces is no caption.
+  const canSend = media ? image.attachment.file !== null : content.trim().length > 0;
+
+  // Only the media feed needs an inline refusal. A text box with nothing in it is not
+  // yet a post and a disabled button says that better than a message would; a media box
+  // with no picture is a question the writer has not been asked yet, so the button stays
+  // live and answers on tap.
+  const emptyError = media && attempted && !canSend ? EMPTY_MEDIA_MESSAGE : null;
 
   // Compressing and submitting are the same lock to a reader: nothing they can change
   // would change what is being sent, so the whole composer goes quiet for both.
+  const compressing = image.attachment.status === "compressing";
   const busy = compressing || isSubmitting;
   const locked = useRef(false);
 
@@ -157,24 +133,40 @@ function Composer({
         if (image.attachment.file) formData.set("image", image.attachment.file);
         formAction(formData);
       }}
-      className={inline ? "flex gap-3 border-b border-line px-4 py-3" : "mt-6 flex gap-3 rounded-2xl border border-line bg-background p-4"}
+      className={
+        inline
+          ? "flex gap-3 border-b border-line px-4 py-3"
+          : "mt-6 flex gap-3 rounded-2xl border border-line bg-background p-4"
+      }
     >
-      <Avatar name={name} isGuest={isGuest} />
+      <Avatar name={guest ? "tamu" : "kamu"} isGuest={guest} />
 
       <div className="flex min-w-0 flex-1 flex-col gap-2">
+        {/* The feed's rule, said where it is being applied rather than in a help page
+            nobody opens. Only the media feed needs it: a text-only box in a text feed is
+            self-explanatory, a missing picture in a media feed is a puzzle. */}
+        {media ? (
+          <p className="text-xs leading-relaxed text-muted">
+            Feed media. Satu gambar wajib, caption boleh dikosongkan.
+          </p>
+        ) : null}
+
         <div className="flex flex-col gap-1">
           <label htmlFor="content" className="sr-only">
-            Isi posting
+            {media ? "Caption posting" : "Isi posting"}
           </label>
           <textarea
             id="content"
             name="content"
-            rows={rows}
+            rows={inline ? 2 : 5}
             maxLength={max}
-            required={isGuest}
+            // The media feed's words are optional, and a `required` box would block a
+            // caption-less picture post before the action ever ran. The text feed's rule
+            // is `min(1)`, which is what `required` means.
+            required={!media}
             value={content}
             onChange={(event) => setContent(event.target.value)}
-            placeholder="Bagian satu, mulai dari sini."
+            placeholder={media ? "Caption, kalau mau." : "Bagian satu, mulai dari sini."}
             className={`w-full resize-none bg-transparent text-[17px] leading-relaxed outline-none placeholder:text-muted ${
               inline ? "min-h-14" : "resize-y"
             }`}
@@ -182,32 +174,42 @@ function Composer({
           <FieldError errors={state.fieldErrors?.content} />
 
           {emptyError ? (
-            <p role="alert" aria-live="polite" className="text-sm text-accent">
+            <p role="alert" aria-live="polite" className="animate-rise text-sm text-accent">
               {emptyError}
             </p>
           ) : null}
         </div>
 
-        {isGuest ? null : (
-          <ImagePreview
-            attachment={image.attachment}
-            onClear={image.clear}
-            disabled={isSubmitting}
-            alt="Pratinjau gambar yang dilampirkan ke posting"
-          />
-        )}
+        {media ? <ImagePreview attachment={image.attachment} onClear={image.clear} disabled={isSubmitting} alt="Pratinjau gambar yang dilampirkan ke posting" /> : null}
 
         <div className="mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-line pt-2">
           <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
-            {isGuest ? null : (
+            {media ? (
               <ImageUpload
                 attachment={image.attachment}
                 inputRef={image.inputRef}
                 onSelect={image.select}
                 disabled={isSubmitting}
               />
+            ) : null}
+
+            {guest ? (
+              <p className="text-xs text-muted">
+                {inline ? (
+                  <>
+                    Tanpa akun, jadi anonim.{" "}
+                    <Link href="/masuk" className="text-accent underline underline-offset-4">
+                      Masuk
+                    </Link>{" "}
+                    untuk memakai nama dan menyimpan suka.
+                  </>
+                ) : (
+                  "Posting tamu bersifat anonim dan hanya teks. Masuk untuk memakai nama, dan untuk meng—like, berkomentar, serta mengelola laporan."
+                )}
+              </p>
+            ) : (
+              <AnonymousToggle compact />
             )}
-            {children}
           </div>
 
           <div className="ml-auto flex items-center gap-3">
@@ -215,9 +217,7 @@ function Composer({
 
             <button
               type="submit"
-              // Nothing is submitted while a pick is being compressed or a send is already
-              // in flight, and a guest cannot post an empty box at all.
-              disabled={busy || (isGuest && content.length === 0)}
+              disabled={busy || (!canSend && !media)}
               aria-busy={busy || undefined}
               onClick={(event) => {
                 setAttempted(true);

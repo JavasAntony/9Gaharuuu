@@ -19,24 +19,30 @@ import { PILL_GHOST, PILL_PRIMARY } from "@/lib/ui";
  * `tone="danger"` is the filled pill, because the palette's only saturated colour
  * is the accent and a destructive action is exactly what that colour should be
  * spent on. The review actions stay outlined so a queue can be skimmed.
+ *
+ * `className` exists for width, not for colour. The accent is spent on at most one
+ * action per screen, and letting a call site append its own background is how two
+ * things end up fighting over it.
  */
 export function ModerationButton({
   children,
   pendingLabel,
   tone = "default",
   disabled = false,
+  className = "",
 }: {
   children: ReactNode;
   pendingLabel: string;
   tone?: "default" | "danger";
   disabled?: boolean;
+  className?: string;
 }) {
   const { pending } = useFormStatus();
 
   const toneClass = tone === "danger" ? PILL_PRIMARY : PILL_GHOST;
 
   return (
-    <button type="submit" disabled={pending || disabled} className={toneClass}>
+    <button type="submit" disabled={pending || disabled} className={`${toneClass} ${className}`}>
       {pending ? pendingLabel : children}
     </button>
   );

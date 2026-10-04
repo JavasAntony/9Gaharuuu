@@ -62,11 +62,17 @@ export function SideNav({
         })}
       </ul>
 
-      <Link href="/buat" className={`${PILL_PRIMARY} mt-5 w-full`}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-          <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+      <Link href="/media" className={`${PILL_PRIMARY} mt-5 w-full`}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} aria-hidden="true">
+          <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
+          <circle cx="9" cy="10" r="1.5" />
+          <path
+            d="M4.5 17.5l4.7-4.7a1.6 1.6 0 0 1 2.3 0l3.5 3.5 1.9-1.9a1.6 1.6 0 0 1 2.3 0l2.3 2.3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
-        Posting baru
+        Kirim gambar
       </Link>
 
       <div className="mt-auto px-3 pb-1 text-xs leading-relaxed text-muted">

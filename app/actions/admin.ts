@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { revalidateFeeds } from "@/lib/revalidate";
 import { createClient } from "@/lib/supabase/server";
 import { requireAdminId } from "@/lib/auth";
 import { moderationDeleteSchema, moderationSchema } from "@/lib/validation";
@@ -123,7 +124,7 @@ async function jalankanHapus(
 
   // Deleting a comment changes the thread's comment list and the feed's comment
   // count; deleting a post changes the feed and its own (now gone) thread page.
-  revalidatePath("/feed");
+  revalidateFeeds();
   if (typeof data === "string") revalidatePath(`/post/${data}`);
   revalidatePath("/admin");
   return { successToken: crypto.randomUUID() };

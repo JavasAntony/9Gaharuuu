@@ -20,11 +20,14 @@ export default async function PostPage({ params }: PageProps<"/post/[id]">) {
 
   return (
     <main>
+      {/* Back goes to whichever feed this post is a row of, which is the same
+          `image_url` the feed query filters on -- so "back" never lands the reader in a
+          list the post is not in. */}
       <PageHeader
         title="Postingan"
         subtitle={formatRelativeTime(post.created_at)}
-        backHref="/feed"
-        backLabel="Kembali ke feed"
+        backHref={post.image_url ? "/media" : "/feed"}
+        backLabel={post.image_url ? "Kembali ke media" : "Kembali ke feed"}
       />
 
       <PostCard

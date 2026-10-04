@@ -48,7 +48,7 @@ export function config() {
   return { url, publishableKey, secretKey };
 }
 
-/** Issues a request and returns `{ status, ok, body }` with the body already parsed. */
+/** Issues a request and returns `{ status, ok, body, raw, headers }` with the body parsed. */
 export async function request(path, options = {}) {
   const { method = "GET", key, token, body, extraHeaders = {}, base } = options;
 
@@ -72,7 +72,7 @@ export async function request(path, options = {}) {
     }
   }
 
-  return { status: response.status, ok: response.ok, body: parsed, raw: text };
+  return { status: response.status, ok: response.ok, body: parsed, raw: text, headers: response.headers };
 }
 
 export function describe(result) {

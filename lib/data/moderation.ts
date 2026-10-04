@@ -120,7 +120,12 @@ export async function listGuestComments(): Promise<AdminGuestComment[]> {
 /** The moderation trail. Only ever read by the admin dashboard. */
 export type ModerationLog = {
   id: string;
-  admin_id: string;
+  /**
+   * Nullable since 0006 (`on delete set null`), and 0017 writes more rows that outlive their
+   * author: deleting an account writes a `user_delete` row *after* the profile is gone, so
+   * this column is null for a row whose subject no longer exists by definition.
+   */
+  admin_id: string | null;
   admin_username: string | null;
   action: string;
   target_type: string;

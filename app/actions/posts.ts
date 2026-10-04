@@ -1,20 +1,34 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { requireUserId } from "@/lib/auth";
+import { requireUserId, requireWriterId } from "@/lib/auth";
+import { BAN_WRITE_MESSAGE } from "@/lib/bans";
+import { revalidateFeeds } from "@/lib/revalidate";
 import {
-  EMPTY_POST_MESSAGE,
+  EMPTY_MEDIA_MESSAGE,
+  EMPTY_TEXT_MESSAGE,
+  IMAGE_NOT_ALLOWED_MESSAGE,
   guestPostSchema,
-  hasTextOrImage,
+  hasImage,
+  hasText,
   idSchema,
-  postSchema,
+  postMediaSchema,
+  postTeksSchema,
 } from "@/lib/validation";
 import { discardUploadedImage, readImageField, uploadPostImage } from "@/lib/images";
 import { type ActionResult, type ActionState } from "@/lib/action-state";
 
 /**
  * Writing to posts.
+ *
+ * There are two create actions, not one with a flag, because the two feeds disagree about
+ * the same fields in both directions: `/feed` needs words and refuses pictures, `/media`
+ * needs a picture and does not care about words. A `kind` parameter would have to be
+ * checked before either rule could be checked at all, and the failure it cannot prevent is
+ * a client that posts an image to the text feed's action.
+ *
+ * Each action therefore reads the image field *first* and rejects it or demands it, so the
+ * route is enforced here and not only in the composer that is supposed to be calling.
  *
  * The one deletion here is a member removing their own post, and it is the one thing in
  * this file that is not a create: `hapusPost` below. Everything else here is a write.
@@ -38,29 +52,49 @@ function pesanHapus(error: { code?: string }): string {
   }
 }
 
+/**
+ * The refusal a write can come back with, from either layer.
+ *
+ * `42501` on an insert has exactly one source: `private.tolak_penulis_terblokir()` (0017),
+ * the trigger that refuses posts, comments, likes and guest likes from a banned account. It
+ * fires before the row exists, so a raw PostgREST call with the publishable key is refused
+ * too -- which is why this mapping is a courtesy and not the boundary.
+ *
+ * The actions that write something before the row (a media post, a comment with an image)
+ * check the ban up front with `requireWriterId()`, because a trigger cannot un-upload a
+ * file. This mapping is the backstop for the paths that upload nothing.
+ */
+function pesanTulis(error: { code?: string }, fallback: string): string {
+  if (error.code === "42501") return BAN_WRITE_MESSAGE;
+  return fallback;
+}
+
 function parseAnonymous(value: FormDataEntryValue | null): boolean {
   return value === "on" || value === "true";
 }
 
 /**
- * Create a post, with text, an image, or both.
+ * Create a post on `/feed`: words, and nothing else.
+ *
+ * The image field is read before anything else so that a forged or stale form carrying a
+ * picture is refused rather than quietly filed. There is no `discardUploadedImage` on that
+ * path because nothing was ever uploaded: the refusal happens before the upload, which is
+ * the only place it can happen without leaving an orphan behind.
  *
  * `id` is generated here rather than returned by the database: the column grants
  * omit `user_id` and RLS policy expressions are part of the query, so
  * `.insert().select()` would raise instead of returning a row. `RETURNING` also
  * requires the new row to satisfy the SELECT policy.
- *
- * The image is uploaded before the row is written, so an upload failure leaves nothing
- * behind. If the insert then fails, the image is removed again -- an object no post
- * points at is invisible to everyone but still costs storage forever.
  */
-export async function buatPost(
+export async function buatPostTeks(
   _state: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
   const image = readImageField(formData);
 
-  const parsed = postSchema.safeParse({
+  if (image) return { message: IMAGE_NOT_ALLOWED_MESSAGE };
+
+  const parsed = postTeksSchema.safeParse({
     content: formData.get("content"),
     anonymous: parseAnonymous(formData.get("anonymous")),
   });
@@ -72,16 +106,79 @@ export async function buatPost(
     };
   }
 
-  // The one rule that has to live here and not in the schema: whether a file arrived is
-  // a `FormData` question, and "no text and no picture" is not a post.
-  if (!hasTextOrImage(parsed.data.content, image)) {
-    return { message: EMPTY_POST_MESSAGE };
+  // The schema's `min(1)` already covers this. It is repeated here for the same reason the
+  // image rule is not: the two checks are the route's contract, and a schema edit that
+  // loosened `min` should not silently make an empty post valid here.
+  if (!hasText(parsed.data.content)) return { message: EMPTY_TEXT_MESSAGE };
+
+  // The id is read but not used: there is no upload on this path, so the storage folder
+  // has nothing to do with it. Reading it is still the point -- it is the check that the
+  // session is real, and not a ban, before a row is written.
+  try {
+    await requireWriterId();
+  } catch (error) {
+    if (error instanceof Error && error.message === "BANNED") return { message: BAN_WRITE_MESSAGE };
+    return { message: "Sesi kamu habis. Masuk lagi ya." };
+  }
+
+  const supabase = await createClient();
+
+  const { error } = await supabase.from("posts").insert({
+    id: crypto.randomUUID(),
+    content: parsed.data.content,
+    image_url: null,
+    anonymous: parsed.data.anonymous,
+  });
+
+  if (error) {
+    return { message: pesanTulis(error, "Gagal menyimpan. Coba lagi sebentar.") };
+  }
+
+  revalidateFeeds();
+  return { successToken: crypto.randomUUID() };
+}
+
+/**
+ * Create a post on `/media`: a picture, with an optional caption.
+ *
+ * The image is uploaded before the row is written, so an upload failure leaves nothing
+ * behind. If the insert then fails, the image is removed again -- an object no post
+ * points at is invisible to everyone but still costs storage forever.
+ *
+ * `image_url: null` is not reachable from here: the guard above refuses the row before the
+ * insert is built, which is what keeps `/media` from ever showing a text-only post.
+ *
+ * The ban check happens *before* the upload rather than after the insert. The trigger would
+ * refuse the row, but the picture would already be in the bucket with nothing pointing at
+ * it -- an orphan that costs storage forever and cannot be removed by anything except a
+ * storage sweep. `requireWriterId()` is what keeps that from happening.
+ */
+export async function buatPostMedia(
+  _state: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const image = readImageField(formData);
+  const parsed = postMediaSchema.safeParse({
+    content: formData.get("content"),
+    anonymous: parseAnonymous(formData.get("anonymous")),
+  });
+
+  // The schema cannot see a file, so "there was no picture" is the one refusal this
+  // action has to make itself.
+  if (!hasImage(image)) return { message: EMPTY_MEDIA_MESSAGE };
+
+  if (!parsed.success) {
+    return {
+      fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string[]>,
+      message: "Belum bisa dikirim.",
+    };
   }
 
   let userId: string;
   try {
-    userId = await requireUserId();
-  } catch {
+    userId = await requireWriterId();
+  } catch (error) {
+    if (error instanceof Error && error.message === "BANNED") return { message: BAN_WRITE_MESSAGE };
     return { message: "Sesi kamu habis. Masuk lagi ya." };
   }
 
@@ -103,17 +200,17 @@ export async function buatPost(
 
   if (error) {
     await discardUploadedImage(supabase, imageUrl);
-    return { message: "Gagal menyimpan. Coba lagi sebentar." };
+    return { message: pesanTulis(error, "Gagal menyimpan. Coba lagi sebentar.") };
   }
 
-  revalidatePath("/feed");
+  revalidateFeeds();
   return { successToken: crypto.randomUUID() };
 }
 
 /**
  * Create a text-only anonymous post as a signed-out visitor.
  *
- * This is a completely separate write path from `buatPost`: no session is read,
+ * This is a completely separate write path from `buatPostTeks`: no session is read,
  * no identity is chosen, and the row lands in `guest_posts`, which has no author
  * column and no image column at all. The `anon` role holds INSERT on exactly
  * `(id, content)` and nothing else, so there is no field here that could be used
@@ -151,7 +248,7 @@ export async function buatGuestPost(
     return { message: "Gagal menyimpan. Coba lagi sebentar." };
   }
 
-  revalidatePath("/feed");
+  revalidateFeeds();
   return { successToken: crypto.randomUUID() };
 }
 
@@ -173,6 +270,11 @@ export async function buatGuestPost(
  *
  * Both paths are revalidated, because the post is on the feed and its own page, and the
  * second one 404s once the row is gone.
+ *
+ * `requireUserId`, not `requireWriterId`: a ban blocks writing, and taking something down is
+ * not writing. The insert trigger from 0017 does not fire on a delete either, so a frozen
+ * member can still remove their own post -- which is the last thing they should have to log
+ * in to be able to do.
  */
 export async function hapusPost(postId: string): Promise<ActionResult> {
   const parsed = idSchema.safeParse(postId);
@@ -193,8 +295,7 @@ export async function hapusPost(postId: string): Promise<ActionResult> {
   // The RPC returns the URL, or null for the text-only posts that never had an image.
   await discardUploadedImage(supabase, typeof data === "string" ? data : null);
 
-  revalidatePath("/feed");
-  revalidatePath(`/post/${parsed.data}`);
+  revalidateFeeds(`/post/${parsed.data}`);
   return { ok: true };
 }
 
@@ -214,6 +315,12 @@ export async function hapusPost(postId: string): Promise<ActionResult> {
  * A duplicate like raises 23505 and is deliberately ignored: liking twice is a
  * no-op, not an error the reader needs to see. Anything else is logged, because a
  * silently swallowed failure looks exactly like a button that does nothing.
+ *
+ * A ban is checked here and again by the insert trigger on `likes` / `guest_likes`. There is
+ * nowhere to put a refusal -- `LikeButton` takes a `void` action and has no error slot --
+ * so the ban is logged rather than shown, and the `BanBanner` in `AppShell` is what tells
+ * the member why nothing happened. Logging rather than swallowing keeps the difference
+ * between "server refused" and "button broken" visible in the server log.
  */
 export async function sukaPost(postId: string, isGuest: boolean): Promise<void> {
   const parsed = idSchema.safeParse(postId);
@@ -221,8 +328,11 @@ export async function sukaPost(postId: string, isGuest: boolean): Promise<void> 
 
   let userId: string;
   try {
-    userId = await requireUserId();
-  } catch {
+    userId = await requireWriterId();
+  } catch (error) {
+    if (error instanceof Error && error.message === "BANNED") {
+      console.error("sukaPost ditolak, akun sedang dibekukan", { postId: parsed.data });
+    }
     return;
   }
 
@@ -235,13 +345,16 @@ export async function sukaPost(postId: string, isGuest: boolean): Promise<void> 
     console.error("sukaPost gagal", { code: error.code, message: error.message });
   }
 
-  revalidatePath("/feed");
-  revalidatePath(`/post/${parsed.data}`);
+  revalidateFeeds(`/post/${parsed.data}`);
 }
 
 /**
  * Unlike. Both columns are in the filter because neither table has a readable id and
  * a like is only removable by whoever made it -- which the RLS policy then re-checks.
+ *
+ * `requireUserId`, not `requireWriterId`, and the asymmetry with `sukaPost` is deliberate:
+ * taking a like back is not writing, and a frozen member who can no longer add one should
+ * not be left with a heart they are not allowed to remove.
  */
 export async function batalSukaPost(postId: string, isGuest: boolean): Promise<void> {
   const parsed = idSchema.safeParse(postId);
@@ -271,6 +384,5 @@ export async function batalSukaPost(postId: string, isGuest: boolean): Promise<v
     console.error("batalSukaPost gagal", { code: error.code, message: error.message });
   }
 
-  revalidatePath("/feed");
-  revalidatePath(`/post/${parsed.data}`);
+  revalidateFeeds(`/post/${parsed.data}`);
 }

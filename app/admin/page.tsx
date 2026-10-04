@@ -13,6 +13,7 @@ import { REPORT_STATUSES, reportStatusLabel } from "@/lib/reports";
 import { formatDateTime } from "@/lib/format";
 import { PageHeader } from "@/components/PageHeader";
 import { CARD } from "@/lib/ui";
+import { AdminTabs } from "./AdminTabs";
 import { GuestContentRow } from "./GuestContentRow";
 import { ReportRow, StatusFilter } from "./ReportRow";
 
@@ -74,6 +75,8 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
   return (
     <main className="pb-10">
       <PageHeader title="Moderasi kelas" subtitle="Nama asli di balik konten anonim" />
+
+      <AdminTabs current="/admin" />
 
       <div className="space-y-4 px-4 py-4">
         <section id="laporan" className={`${CARD} p-4`}>
@@ -166,25 +169,51 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
   );
 }
 
+/**
+ * Every `moderation_logs.action` the database will accept, in the words an admin would use.
+ *
+ * This map and the CHECK constraint in `moderation_logs_action_check` have to be edited
+ * together: the constraint is the closed list, so a new action added in a migration and not
+ * added here renders as the raw snake_case value in the audit trail. Migration 0017 is where
+ * the eleven account and announcement actions came from, and it says the same thing.
+ */
 const ACTION_LABELS: Record<string, string> = {
   report_review: "Menandai ditinjau",
   report_resolve: "Menyelesaikan laporan",
   report_dismiss: "Mengabaikan laporan",
   content_delete: "Menghapus konten",
+  post_self_delete: "Menghapus posting sendiri",
+  user_create: "Membuat akun",
+  user_delete: "Menghapus akun",
+  user_ban: "Memblokir akun",
+  user_unban: "Membuka blokir akun",
+  user_role_change: "Mengubah peran akun",
+  announcement_create: "Membuat pengumuman",
+  announcement_update: "Mengubah pengumuman",
+  announcement_activate: "Mengaktifkan pengumuman",
+  announcement_archive: "Mengarsipkan pengumuman",
+  announcement_delete: "Menghapus pengumuman",
 };
 
+/** Same rule as above: one entry per value `moderation_logs_target_type_check` allows. */
 const TARGET_LABELS: Record<string, string> = {
   post: "Postingan",
   comment: "Komentar",
   guest_post: "Posting tamu",
   guest_comment: "Balasan tamu",
   report: "Laporan",
+  user: "Akun",
+  announcement: "Pengumuman",
 };
 
 function LogRow({ log }: { log: ModerationLog }) {
+  // `admin_id` is nullable since 0006, so a moderation row can outlive the account that
+  // wrote it. The view fills the username from a LEFT JOIN and both sides are null in that
+  // case, which is the one row shape that has to say something other than a name.
+  const actor = log.admin_username ?? "Akun terhapus";
   return (
     <li className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line px-4 py-3 text-xs text-muted last:border-b-0">
-      <span className="font-semibold text-foreground">{log.admin_username ?? "Akun terhapus"}</span>
+      <span className="font-semibold text-foreground">{actor}</span>
       <span>{ACTION_LABELS[log.action] ?? log.action}</span>
       <span>{TARGET_LABELS[log.target_type] ?? log.target_type}</span>
       {log.reason ? <span>· {log.reason}</span> : null}

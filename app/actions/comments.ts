@@ -1,11 +1,12 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidateFeeds } from "@/lib/revalidate";
 import { createClient } from "@/lib/supabase/server";
-import { requireUserId } from "@/lib/auth";
+import { requireWriterId } from "@/lib/auth";
+import { BAN_WRITE_MESSAGE } from "@/lib/bans";
 import {
   commentSchema,
-  EMPTY_POST_MESSAGE,
+  EMPTY_COMMENT_MESSAGE,
   guestCommentSchema,
   hasTextOrImage,
 } from "@/lib/validation";
@@ -35,6 +36,12 @@ function parseBoolean(value: unknown): boolean {
  * the insert fails. The `image_url` column additionally has a CHECK constraint, so a
  * value that did not come from our bucket is refused by the database rather than being
  * stored and rendered on somebody else's device.
+ *
+ * A ban is checked here before the upload rather than left to the `comments_tolak_terblokir`
+ * trigger: the trigger refuses the row, but the picture would already be in the bucket by
+ * then, orphaned with nothing pointing at it. The trigger is still the boundary -- it holds
+ * against a raw PostgREST call that never runs this file -- and its `42501` is mapped to the
+ * same message below.
  */
 export async function tambahKomentar(
   _state: ActionState,
@@ -44,8 +51,9 @@ export async function tambahKomentar(
 
   let userId: string;
   try {
-    userId = await requireUserId();
-  } catch {
+    userId = await requireWriterId();
+  } catch (error) {
+    if (error instanceof Error && error.message === "BANNED") return { message: BAN_WRITE_MESSAGE };
     return { message: "Sesi kamu habis. Masuk lagi ya." };
   }
 
@@ -65,7 +73,7 @@ export async function tambahKomentar(
   }
 
   if (!hasTextOrImage(parsed.data.content, image)) {
-    return { message: EMPTY_POST_MESSAGE };
+    return { message: EMPTY_COMMENT_MESSAGE };
   }
 
   const supabase = await createClient();
@@ -91,6 +99,7 @@ export async function tambahKomentar(
 
   if (error) {
     await discardUploadedImage(supabase, imageUrl);
+    if (error.code === "42501") return { message: BAN_WRITE_MESSAGE };
     if (error.code === "23514") {
       return { message: "Balasan harus berada di post yang sama." };
     }
@@ -100,8 +109,7 @@ export async function tambahKomentar(
     return { message: "Gagal menyimpan. Coba lagi sebentar." };
   }
 
-  revalidatePath("/feed");
-  revalidatePath(`/post/${parsed.data.postId}`);
+  revalidateFeeds(`/post/${parsed.data.postId}`);
   return { successToken: crypto.randomUUID() };
 }
 
@@ -160,7 +168,6 @@ export async function tambahBalasanTamu(
     return { message: "Gagal menyimpan. Coba lagi sebentar." };
   }
 
-  revalidatePath("/feed");
-  revalidatePath(`/post/${parsed.data.postId}`);
+  revalidateFeeds(`/post/${parsed.data.postId}`);
   return { successToken: crypto.randomUUID() };
 }

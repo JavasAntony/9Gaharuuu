@@ -40,3 +40,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local agent tooling
+# `.kilo/worktrees/` holds full copies of this repository for parallel sessions, so
+# committing it would duplicate the entire tree inside itself.
+/.kilo/

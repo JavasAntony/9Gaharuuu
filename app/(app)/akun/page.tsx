@@ -48,8 +48,8 @@ export default async function AkunPage() {
         </p>
 
         <div className="mt-6 flex flex-wrap gap-3">
-          <Link href="/buat" className={PILL_PRIMARY}>
-            Buat posting
+          <Link href="/media" className={PILL_PRIMARY}>
+            Kirim gambar
           </Link>
           <form action={keluar}>
             <button type="submit" className={PILL_GHOST}>
