@@ -1,19 +1,9 @@
-import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth";
-import { BottomNav } from "@/components/BottomNav";
+import { AppShell } from "@/components/AppShell";
 
-export const metadata: Metadata = {
-  title: "KelasKita",
-  robots: { index: false, follow: false },
-};
-
+/** Routes that only make sense with a session. Everything else lives in (publik). */
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   await requireUser();
 
-  return (
-    <div className="mx-auto flex min-h-full w-full max-w-xl flex-col">
-      <div className="flex-1 pb-24">{children}</div>
-      <BottomNav />
-    </div>
-  );
+  return <AppShell>{children}</AppShell>;
 }

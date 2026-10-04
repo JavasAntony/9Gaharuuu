@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isPublicPath } from "@/lib/constants";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -30,9 +31,9 @@ export async function updateSession(request: NextRequest) {
   // races with a second refresh revokes the whole session.
   const { data } = await supabase.auth.getClaims();
 
-  // This is an optimistic gate only. The real check is requireUser() in
-  // app/(app)/layout.tsx and in every Server Action.
-  if (!data?.claims && !request.nextUrl.pathname.startsWith("/masuk")) {
+  // This is an optimistic gate only. The real check is requireUser() in the
+  // route layouts and in every Server Action.
+  if (!data?.claims && !isPublicPath(request.nextUrl.pathname)) {
     const url = request.nextUrl.clone();
     url.pathname = "/masuk";
     url.search = "";

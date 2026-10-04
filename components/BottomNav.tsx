@@ -2,61 +2,48 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { type NavItem } from "@/lib/nav";
 
-const ITEMS = [
-  {
-    href: "/feed",
-    label: "Feed",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} aria-hidden="true">
-        <path d="M4 5h16M4 10h16M4 15h10M4 20h7" strokeLinecap="round" />
-      </svg>
-    ),
-  },
-  {
-    href: "/buat",
-    label: "Buat",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} aria-hidden="true">
-        <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-      </svg>
-    ),
-  },
-  {
-    href: "/akun",
-    label: "Akun",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} aria-hidden="true">
-        <circle cx="12" cy="9" r="3.2" />
-        <path d="M5.5 19.5c1.2-3 3.6-4.5 6.5-4.5s5.3 1.5 6.5 4.5" strokeLinecap="round" />
-      </svg>
-    ),
-  },
-] as const;
-
-export function BottomNav() {
+/**
+ * Fixed bottom navigation.
+ *
+ * Takes the items as a prop instead of building them here, because the list
+ * depends on the session and `AppShell` is the Server Component that knows it.
+ * That keeps the auth-aware decision in one place: `lib/nav.tsx`.
+ *
+ * `lg:hidden` because the desktop rail in `SideNav` renders the same list with
+ * the labels inline; two navigations on one screen would be a duplicate tab stop.
+ */
+export function BottomNav({ items }: { items: NavItem[] }) {
   const pathname = usePathname();
 
   return (
     <nav
       aria-label="Navigasi utama"
-      className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-background"
+      className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-background/90 backdrop-blur-md lg:hidden"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       <ul className="mx-auto flex max-w-xl">
-        {ITEMS.map((item) => {
+        {items.map((item) => {
           const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+
           return (
             <li key={item.href} className="flex-1">
               <Link
                 href={item.href}
                 aria-current={active ? "page" : undefined}
-                className={`flex min-h-14 flex-col items-center justify-center gap-1 text-xs transition-colors ${
-                  active ? "text-accent" : "text-muted hover:text-foreground"
+                className={`flex min-h-14 flex-col items-center justify-center gap-1 px-1 text-[11px] transition-colors ${
+                  active ? "font-bold text-accent" : "font-medium text-muted"
                 }`}
               >
-                <span className="size-6">{item.icon}</span>
-                <span>{item.label}</span>
+                <span
+                  className={`flex size-8 items-center justify-center rounded-full transition-colors [&>svg]:size-[22px] ${
+                    active ? "bg-accent-soft" : ""
+                  }`}
+                >
+                  {item.icon}
+                </span>
+                {item.label}
               </Link>
             </li>
           );

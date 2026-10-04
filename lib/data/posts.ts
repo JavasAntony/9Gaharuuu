@@ -12,6 +12,8 @@ export type FeedPost = {
   liked_by_me: boolean;
   like_count: number;
   comment_count: number;
+  /** True for a post from a signed-out visitor: no author, not reportable. */
+  is_guest: boolean;
 };
 
 export type FeedPage = {
@@ -20,7 +22,7 @@ export type FeedPage = {
 };
 
 const FEED_COLUMNS =
-  "id, content, image_url, anonymous, created_at, author_name, is_mine, liked_by_me, like_count, comment_count";
+  "id, content, image_url, anonymous, created_at, author_name, is_mine, liked_by_me, like_count, comment_count, is_guest";
 
 /**
  * The only module that reads posts. Everything goes through the `post_feed`

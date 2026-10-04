@@ -119,7 +119,7 @@ for (const account of ACCOUNTS) {
   seeded.push(await upsertUser(account));
 }
 
-console.log("\nKelasKita v1 — akun siap dipakai di /masuk\n");
+console.log("\n9Gaharuuu — akun siap dipakai di /masuk\n");
 console.log("  username   peran");
 for (const account of seeded) {
   console.log(

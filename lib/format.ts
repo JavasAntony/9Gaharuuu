@@ -9,6 +9,25 @@ const RELATIVE_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
 
 const formatter = new Intl.RelativeTimeFormat("id", { numeric: "auto" });
 
+const absoluteFormatter = new Intl.DateTimeFormat("id-ID", {
+  dateStyle: "medium",
+  timeStyle: "short",
+  timeZone: "Asia/Jakarta",
+});
+
+/**
+ * Absolute timestamp, for the admin surfaces where "2 jam lalu" is not enough to
+ * line a report up against its content.
+ *
+ * `timeZone` is pinned so the server render and the client hydration produce the
+ * same string; without it a visitor in another zone would mismatch.
+ */
+export function formatDateTime(iso: string): string {
+  const timestamp = Date.parse(iso);
+  if (Number.isNaN(timestamp)) return "—";
+  return absoluteFormatter.format(timestamp);
+}
+
 /**
  * Indonesian relative time ("baru saja", "2 menit lalu", "kemarin").
  *
@@ -35,4 +54,42 @@ export function formatRelativeTime(iso: string, now: Date = new Date()): string 
   }
 
   return formatter.format(Math.trunc(delta / (60 * 1000)), "minute");
+}
+
+/**
+ * Compact relative time for post headers: "2m", "1j", "3h".
+ *
+ * The feed header has room for four characters, not for "2 menit lalu". Same rule
+ * as `formatRelativeTime`: render it on the server and pass the string down, or
+ * the two renders will disagree. `formatRelativeTime` stays the accessible
+ * version -- put it in `title` or `aria-label` next to this one.
+ *
+ * Units are the Indonesian abbreviations people actually write: m (menit), j
+ * (jam), h (hari), mg (minggu), bln (bulan), th (tahun).
+ */
+const SHORT_UNITS: [string, number][] = [
+  ["th", 365 * 24 * 60 * 60 * 1000],
+  ["bln", 30 * 24 * 60 * 60 * 1000],
+  ["mg", 7 * 24 * 60 * 60 * 1000],
+  ["h", 24 * 60 * 60 * 1000],
+  ["j", 60 * 60 * 1000],
+  ["m", 60 * 1000],
+];
+
+export function formatRelativeShort(iso: string, now: Date = new Date()): string {
+  const timestamp = Date.parse(iso);
+  if (Number.isNaN(timestamp)) return "";
+
+  const magnitude = Math.abs(timestamp - now.getTime());
+
+  // Under a minute is "now", not "0m".
+  if (magnitude < 60 * 1000) return "baru saja";
+
+  for (const [suffix, ms] of SHORT_UNITS) {
+    if (magnitude >= ms) {
+      return `${Math.trunc(magnitude / ms)}${suffix}`;
+    }
+  }
+
+  return "baru saja";
 }

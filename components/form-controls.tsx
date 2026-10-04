@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useFormStatus } from "react-dom";
+import { PILL_PRIMARY } from "@/lib/ui";
 
 export function SubmitButton({
   children,
@@ -15,11 +16,7 @@ export function SubmitButton({
   const { pending } = useFormStatus();
 
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className={`inline-flex min-h-11 items-center justify-center rounded-md bg-accent px-4 font-medium text-white transition-opacity disabled:opacity-60 ${className}`}
-    >
+    <button type="submit" disabled={pending} className={`${PILL_PRIMARY} min-h-11 w-full ${className}`}>
       {pending ? pendingLabel : children}
     </button>
   );
@@ -28,8 +25,10 @@ export function SubmitButton({
 export function FormMessage({ message }: { message?: string | undefined }) {
   if (!message) return null;
 
+  // `rise` is why this does not read as a glitch: a red line that appears where nothing
+  // was is easy to miss on a phone, and this is the only signal that a send was refused.
   return (
-    <p role="alert" aria-live="polite" className="text-sm text-accent">
+    <p role="alert" aria-live="polite" className="animate-rise text-sm font-semibold text-accent">
       {message}
     </p>
   );

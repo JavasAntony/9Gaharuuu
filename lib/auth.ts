@@ -51,3 +51,25 @@ export async function requireUserId(): Promise<string> {
   if (!user) throw new Error("UNAUTHENTICATED");
   return user.id;
 }
+
+/**
+ * Admin guard for Server Components.
+ *
+ * The `role` comes from the `me` view, so it is whatever the database says and
+ * not anything the client can assert. This is UX, not the security boundary:
+ * every moderation RPC re-checks the role with `private.is_admin()`, so a
+ * forged `role` claim in the UI changes nothing.
+ */
+export async function requireAdmin(): Promise<SessionUser> {
+  const user = await requireUser();
+  if (user.role !== "admin") redirect("/akun");
+  return user;
+}
+
+/** Admin guard for Server Actions. Throws instead of redirecting. */
+export async function requireAdminId(): Promise<string> {
+  const user = await getCurrentUser();
+  if (!user) throw new Error("UNAUTHENTICATED");
+  if (user.role !== "admin") throw new Error("FORBIDDEN");
+  return user.id;
+}

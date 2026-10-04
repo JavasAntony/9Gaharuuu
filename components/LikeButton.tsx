@@ -10,7 +10,7 @@ function HeartIcon({ filled }: { filled: boolean }) {
       fill={filled ? "currentColor" : "none"}
       stroke="currentColor"
       strokeWidth={1.7}
-      className="size-5"
+      className="size-4"
       aria-hidden="true"
     >
       <path
@@ -25,15 +25,22 @@ function HeartIcon({ filled }: { filled: boolean }) {
  * The heart flips the moment it is tapped. `useOptimistic` seeds from the values
  * the server rendered, applies the flip for the duration of the transition, and
  * falls back to the revalidated props once the Server Action resolves.
+ *
+ * `isGuest` picks the table the like is written to. A guest post is not in `posts`,
+ * so `likes.post_id` cannot reference it; `guest_likes` exists for exactly that and
+ * the flag comes from the same `post_feed.is_guest` column this row was rendered
+ * from, so the two cannot drift apart.
  */
 function LikeToggle({
   postId,
   liked,
   count,
+  isGuest,
 }: {
   postId: string;
   liked: boolean;
   count: number;
+  isGuest: boolean;
 }) {
   const [optimistic, setOptimistic] = useOptimistic({ liked, count }, (state) => ({
     liked: !state.liked,
@@ -46,8 +53,8 @@ function LikeToggle({
   function toggle() {
     startTransition(async () => {
       setOptimistic(null);
-      if (willLike) await sukaPost(postId);
-      else await batalSukaPost(postId);
+      if (willLike) await sukaPost(postId, isGuest);
+      else await batalSukaPost(postId, isGuest);
     });
   }
 
@@ -56,14 +63,19 @@ function LikeToggle({
       type="button"
       onClick={toggle}
       aria-pressed={optimistic.liked}
+      aria-label={willLike ? "Sukai post ini" : "Batalkan suka"}
       disabled={isPending}
-      className={`inline-flex min-h-11 items-center gap-1.5 transition-colors ${
-        optimistic.liked ? "text-accent" : "text-muted hover:text-foreground"
+      className={`inline-flex min-h-9 items-center gap-1.5 rounded-full px-2 text-xs transition-colors hover:bg-accent-soft active:scale-95 motion-reduce:active:scale-100 ${
+        optimistic.liked ? "font-semibold text-accent" : "text-muted hover:text-accent"
       }`}
     >
-      <HeartIcon filled={optimistic.liked} />
+      {/* The heart pops once per toggle. `useOptimistic` already flips it before the
+          server answers, but a fill that changes under a still heart is easy to miss when
+          the count is small, and the count is the part that has to be noticed. */}
+      <span className={optimistic.liked ? "animate-pop motion-reduce:animate-none" : ""}>
+        <HeartIcon filled={optimistic.liked} />
+      </span>
       <span className="tabular-nums">{optimistic.count}</span>
-      <span className="sr-only">{willLike ? "Sukai post ini" : "Batalkan suka"}</span>
     </button>
   );
 }
@@ -72,10 +84,12 @@ export function LikeButton({
   postId,
   liked,
   count,
+  isGuest = false,
 }: {
   postId: string;
   liked: boolean;
   count: number;
+  isGuest?: boolean;
 }) {
-  return <LikeToggle postId={postId} liked={liked} count={count} />;
+  return <LikeToggle postId={postId} liked={liked} count={count} isGuest={isGuest} />;
 }

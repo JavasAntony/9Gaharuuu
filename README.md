@@ -1,4 +1,4 @@
-# KelasKita v1
+# 9Gaharuuu
 
 Private class social platform. Text posts with an anonymity toggle, likes, and
 one level of threaded comments. Indonesian UI, Indonesian route segments.
@@ -49,7 +49,13 @@ users. Do not relax a grant without rerunning it.
    cannot be written, because the filter itself references a column you cannot
    read. RLS is the real ownership guard, so deleting somebody else's post is a
    silent no-op rather than an error.
-5. **Never `NEXT_PUBLIC_` a secret key**, and keep `SUPABASE_SECRET_KEY` out of
+5. **A member can only delete their own post through an RPC.** `authenticated`
+   has no `DELETE` grant on `posts` and the only policy calls
+   `private.is_admin()`, so a self-delete goes through
+   `public.hapus_post_saya` (0016) — `security definer`, one branch, ownership
+   resolved by `private.owns_post()` — which also writes the row to
+   `moderation_logs`. Do not add a grant to shortcut it.
+6. **Never `NEXT_PUBLIC_` a secret key**, and keep `SUPABASE_SECRET_KEY` out of
    Vercel for v1. It is read only by `scripts/*.mjs`.
 
 ---

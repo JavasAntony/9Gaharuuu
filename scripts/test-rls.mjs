@@ -14,10 +14,18 @@ import { config, describe, request } from "./_shared.mjs";
 
 const PASSWORD = "rls-test-password";
 const USERS = ["test_a", "test_b"];
+/** Only ever used for `hapus_konten`, which is admin-only. */
+const ADMIN = "test_rls_admin";
 
 const { url, secretKey, publishableKey } = config();
 
 const created = [];
+/**
+ * The guest fixture belongs to nobody, so deleting the throwaway users cannot
+ * cascade it away -- it has to be removed by id or every run leaves a row behind
+ * in `guest_posts`.
+ */
+const guestFixtures = [];
 let passed = 0;
 
 function check(label, condition, detail) {
@@ -123,6 +131,21 @@ async function createPost(token, content, anonymous) {
   return id;
 }
 
+/**
+ * Grants the admin role with the service key, which is how `scripts/seed-users.mjs`
+ * does it. `private.is_admin()` reads `profiles.role`, not a JWT claim, so this takes
+ * effect on the very next query -- no re-login needed.
+ */
+async function promoteToAdmin(userId) {
+  const result = await request(`/rest/v1/profiles?id=eq.${userId}`, {
+    method: "PATCH",
+    key: secretKey,
+    base: url,
+    body: { role: "admin" },
+  });
+  if (!result.ok) throw new Error(`Could not promote ${userId}. ${describe(result)}`);
+}
+
 async function cleanup() {
   for (const id of created) {
     await request(`/auth/v1/admin/users/${id}`, { method: "DELETE", key: secretKey, base: url });
@@ -130,13 +153,20 @@ async function cleanup() {
 }
 
 try {
-  console.log("\nSetting up two throwaway users…");
-  for (const username of USERS) await removeByEmail(username);
+  console.log("\nSetting up throwaway users…");
+  for (const username of [...USERS, ADMIN]) await removeByEmail(username);
 
   const idA = await createUser(USERS[0]);
   const idB = await createUser(USERS[1]);
+  await createUser(ADMIN);
+  await promoteToAdmin(
+    (
+      await request(`/auth/v1/admin/users?per_page=1000`, { key: secretKey, base: url })
+    ).body.users.find((user) => user.email === `${ADMIN}@kelaskita.local`).id,
+  );
   const tokenA = await signIn(USERS[0]);
   const tokenB = await signIn(USERS[1]);
+  const adminToken = await signIn(ADMIN);
 
   const namedPostA = await createPost(tokenA, "post bernama dari test_a", false);
   const anonPostA = await createPost(tokenA, "post anonim dari test_a", true);
@@ -218,13 +248,17 @@ try {
   });
   check("test_b: UPDATE on posts is denied", isDenied(updatePost), describe(updatePost));
 
+  // Posts are admin-only now: `authenticated` holds no DELETE grant on `posts`
+  // and the single delete policy is `private.is_admin()`. So this is refused
+  // outright rather than matching zero rows, which is the better outcome -- a
+  // silent no-op would look like a successful delete.
   const deleteStrangersPost = await rest(`posts?id=eq.${anonPostA}`, {
     method: "DELETE",
     token: tokenB,
   });
   check(
-    "test_b: the delete request itself is accepted",
-    deleteStrangersPost.ok,
+    "test_b: DELETE on posts is denied",
+    isDenied(deleteStrangersPost),
     describe(deleteStrangersPost),
   );
   check(
@@ -248,7 +282,7 @@ try {
     "the like is gone",
   );
 
-  console.log("\n4. A student can manage their own rows");
+  console.log("\n4. A student can comment and like, but cannot delete anything");
 
   const likeAgain = await rest("likes", {
     method: "POST",
@@ -262,6 +296,272 @@ try {
     token: tokenB,
   });
   check("test_b: unliking works", unlike.ok, describe(unlike));
+
+  // Guest likes live in their own table because `likes.post_id` references
+  // `posts (id)` and a guest post is not a row there. Liking one used to fail with
+  // 23503 every time, so the feed's guest rows are checked here for real: the count
+  // has to move, and the liker has to be the only one who sees their own like.
+  console.log("\n4b. A student can like a guest post");
+
+  const guestForLike = crypto.randomUUID();
+  const mkGuestForLike = await rest("guest_posts", {
+    method: "POST",
+    body: { id: guestForLike, content: "postingan tamu untuk di-suka" },
+  });
+  guestFixtures.push(guestForLike);
+  check("signed out: the guest post is created", mkGuestForLike.ok, describe(mkGuestForLike));
+
+  const likeGuest = await rest("guest_likes", {
+    method: "POST",
+    token: tokenA,
+    body: { user_id: idA, guest_post_id: guestForLike },
+  });
+  check("test_a: liking a guest post works", likeGuest.ok, describe(likeGuest));
+
+  const likeGuestAgain = await rest("guest_likes", {
+    method: "POST",
+    token: tokenA,
+    body: { user_id: idA, guest_post_id: guestForLike },
+  });
+  check(
+    "a duplicate guest like is rejected rather than double counted",
+    !likeGuestAgain.ok,
+    describe(likeGuestAgain),
+  );
+
+  const guestRowForA = await rest(`post_feed?id=eq.${guestForLike}&select=like_count,liked_by_me`, {
+    token: tokenA,
+  });
+  check("test_a: the feed counts the guest like once", guestRowForA.body?.[0]?.like_count === 1, describe(guestRowForA));
+  check(
+    "test_a: liked_by_me is true for the liker",
+    guestRowForA.body?.[0]?.liked_by_me === true,
+    describe(guestRowForA),
+  );
+
+  const guestRowForB = await rest(`post_feed?id=eq.${guestForLike}&select=like_count,liked_by_me`, {
+    token: tokenB,
+  });
+  check(
+    "test_b: sees the count but not the liker's own like",
+    guestRowForB.body?.[0]?.like_count === 1 && guestRowForB.body?.[0]?.liked_by_me === false,
+    describe(guestRowForB),
+  );
+
+  const guestLikeForgery = await rest("guest_likes", {
+    method: "POST",
+    token: tokenB,
+    body: { user_id: idA, guest_post_id: guestForLike },
+  });
+  check("a guest like cannot be attributed to somebody else", !guestLikeForgery.ok, describe(guestLikeForgery));
+
+  const guestLikeAnonymous = await rest("guest_likes", {
+    method: "POST",
+    body: { guest_post_id: guestForLike },
+  });
+  check("signed out: liking is refused", !guestLikeAnonymous.ok, describe(guestLikeAnonymous));
+
+  // The grant and the policy are both scoped to the caller's own rows, so this is a
+  // read that succeeds and returns nothing -- not a denial. Asserting the effect is
+  // the only way to show test_b cannot enumerate test_a's likes.
+  const guestLikesForA = await rest(`guest_likes?guest_post_id=eq.${guestForLike}&select=user_id`, {
+    token: tokenA,
+  });
+  check(
+    "test_a: reads its own guest like",
+    guestLikesForA.body?.length === 1 && guestLikesForA.body[0]?.user_id === idA,
+    describe(guestLikesForA),
+  );
+
+  const guestLikesForB = await rest(`guest_likes?guest_post_id=eq.${guestForLike}&select=user_id`, {
+    token: tokenB,
+  });
+  check(
+    "test_b: cannot enumerate test_a's guest likes",
+    guestLikesForB.ok && Array.isArray(guestLikesForB.body) && guestLikesForB.body.length === 0,
+    describe(guestLikesForB),
+  );
+
+  const unlikeGuest = await rest(
+    `guest_likes?guest_post_id=eq.${guestForLike}&user_id=eq.${idA}`,
+    { method: "DELETE", token: tokenA },
+  );
+  check("test_a: unliking a guest post works", unlikeGuest.ok, describe(unlikeGuest));
+  check(
+    "the guest like is gone from the feed",
+    (await rest(`post_feed?id=eq.${guestForLike}&select=like_count`, { token: tokenA })).body?.[0]
+      ?.like_count === 0,
+    "the count did not fall",
+  );
+
+  // A guest post used to be uncommentable, because both comment tables carried
+  // `post_id references posts (id)` and a guest post is not a row there. The UI
+  // explained that constraint as if it were a rule. Migration 0010 replaced the
+  // foreign keys with triggers that accept a post from either table, so all four
+  // combinations have to work now -- including the reply directions, which is where
+  // leaving `comments.parent_comment_id` behind as a foreign key showed up.
+  console.log("\n4c. Anyone can comment on anything");
+
+  const guestThreadPost = crypto.randomUUID();
+  const mkGuestThreadPost = await rest("guest_posts", {
+    method: "POST",
+    body: { id: guestThreadPost, content: "posting tamu yang dikomentari" },
+  });
+  guestFixtures.push(guestThreadPost);
+  check("signed out: the guest post is created", mkGuestThreadPost.ok, describe(mkGuestThreadPost));
+
+  const onGuestPost = await rest("comments", {
+    method: "POST",
+    token: tokenA,
+    body: {
+      id: crypto.randomUUID(),
+      post_id: guestThreadPost,
+      content: "komentar anggota di posting tamu",
+      anonymous: false,
+      parent_comment_id: null,
+    },
+  });
+  check("test_a: a member can comment on a guest post", onGuestPost.ok, describe(onGuestPost));
+
+  const guestReplyParent = crypto.randomUUID();
+  const guestOnGuestPost = await rest("guest_comments", {
+    method: "POST",
+    body: {
+      id: guestReplyParent,
+      post_id: guestThreadPost,
+      content: "balasan tamu di posting tamu",
+      parent_comment_id: null,
+    },
+  });
+  check("signed out: a guest can reply on a guest post", guestOnGuestPost.ok, describe(guestOnGuestPost));
+
+  const guestReplyId = crypto.randomUUID();
+  const guestReplyToGuest = await rest("guest_comments", {
+    method: "POST",
+    body: {
+      id: guestReplyId,
+      post_id: guestThreadPost,
+      content: "balasan tamu membalas balasan tamu",
+      parent_comment_id: guestReplyParent,
+    },
+  });
+  check("signed out: a guest can reply to their own reply", guestReplyToGuest.ok, describe(guestReplyToGuest));
+
+  const memberOnGuestReply = await rest("comments", {
+    method: "POST",
+    token: tokenA,
+    body: {
+      id: crypto.randomUUID(),
+      post_id: guestThreadPost,
+      content: "anggota membalas balasan tamu",
+      anonymous: false,
+      parent_comment_id: guestReplyParent,
+    },
+  });
+  check(
+    "test_a: a member can reply to a guest reply",
+    memberOnGuestReply.ok,
+    describe(memberOnGuestReply),
+  );
+
+  const guestThread = await rest(`comment_thread?post_id=eq.${guestThreadPost}&select=id,author_name,is_guest`);
+  check("the guest thread returns all four rows", guestThread.body?.length === 4, describe(guestThread));
+  check(
+    "a member's comment is named and a guest's is not",
+    guestThread.body?.some((row) => row.author_name === "test_a" && row.is_guest === false) &&
+      guestThread.body?.filter((row) => row.is_guest).every((row) => row.author_name === "Anonim"),
+    describe(guestThread),
+  );
+  check(
+    "the feed counts the comments on a guest post",
+    (await rest(`post_feed?id=eq.${guestThreadPost}&select=comment_count`, { token: tokenA })).body?.[0]
+      ?.comment_count === 4,
+    "count is wrong",
+  );
+
+  const ghostThread = await rest("comments", {
+    method: "POST",
+    token: tokenA,
+    body: {
+      id: crypto.randomUUID(),
+      post_id: crypto.randomUUID(),
+      content: "komentar tanpa posting",
+      anonymous: false,
+      parent_comment_id: null,
+    },
+  });
+  check(
+    "a comment on a post that does not exist is still rejected",
+    ghostThread.body?.code === "23503",
+    describe(ghostThread),
+  );
+
+  const memberPostId = crypto.randomUUID();
+  await rest("posts", {
+    method: "POST",
+    token: tokenA,
+    body: { id: memberPostId, content: "posting anggota untuk uji balasan", anonymous: false },
+  });
+
+  const crossThread = await rest("comments", {
+    method: "POST",
+    token: tokenA,
+    body: {
+      id: crypto.randomUUID(),
+      post_id: memberPostId,
+      content: "balasan ke komentar di posting lain",
+      anonymous: false,
+      parent_comment_id: guestReplyParent,
+    },
+  });
+  check(
+    "a reply to a comment on another post is still rejected",
+    crossThread.body?.code === "23514",
+    describe(crossThread),
+  );
+
+  // The cascades the foreign keys used to provide are now triggers, and a trigger
+  // that throws looks exactly like a delete that silently failed. Deleting a
+  // post that has a comment with a reply under it is the case that catches it.
+  const subtreePostId = crypto.randomUUID();
+  await rest("posts", {
+    method: "POST",
+    token: tokenA,
+    body: { id: subtreePostId, content: "posting dengan pohon komentar", anonymous: false },
+  });
+  const rootCommentId = crypto.randomUUID();
+  await rest("comments", {
+    method: "POST",
+    token: tokenA,
+    body: { id: rootCommentId, post_id: subtreePostId, content: "akar", anonymous: false, parent_comment_id: null },
+  });
+  await rest("comments", {
+    method: "POST",
+    token: tokenA,
+    body: {
+      id: crypto.randomUUID(),
+      post_id: subtreePostId,
+      content: "anak",
+      anonymous: false,
+      parent_comment_id: rootCommentId,
+    },
+  });
+  await rest("guest_comments", {
+    method: "POST",
+    body: { id: crypto.randomUUID(), post_id: subtreePostId, content: "cucu tamu", parent_comment_id: rootCommentId },
+  });
+
+  const deleteTreePost = await rest("rpc/hapus_konten", {
+    method: "POST",
+    token: adminToken,
+    body: { p_kind: "post", p_id: subtreePostId, p_reason: "test_rls" },
+  });
+  check("an admin deletes the post", deleteTreePost.ok, describe(deleteTreePost));
+  check(
+    "the whole comment tree went with it",
+    (await countRows(`comment_thread?post_id=eq.${subtreePostId}`, tokenA)) === 0,
+    "a comment outlived the post",
+  );
 
   const commentId = crypto.randomUUID();
   const comment = await rest("comments", {
@@ -294,48 +594,90 @@ try {
     describe(crossPostReply),
   );
 
-  const deleteStrangersComment = await rest(`comments?id=eq.${commentId}`, {
-    method: "DELETE",
-    token: tokenB,
-  });
-  check(
-    "test_b: deleting test_a's comment is accepted",
-    deleteStrangersComment.ok,
-    describe(deleteStrangersComment),
-  );
-  check(
-    "test_a's comment survives test_b's delete attempt",
-    (await countRows(`comment_thread?id=eq.${commentId}`, tokenB)) === 1,
-    "the comment is gone",
-  );
-
+  // Not even the author may delete. `posts` and `comments` grant DELETE to nobody,
+  // and the two paths that do delete -- the RLS policy and `public.hapus_konten` --
+  // both resolve through `private.is_admin()`. Removal is an admin action, so the
+  // owner is left asking an admin rather than quietly removing the evidence.
   const deleteOwnComment = await rest(`comments?id=eq.${commentId}`, {
     method: "DELETE",
     token: tokenA,
   });
-  check("test_a: deleting their own comment works", deleteOwnComment.ok, describe(deleteOwnComment));
   check(
-    "test_a's comment is really gone",
-    (await countRows(`comment_thread?id=eq.${commentId}`, tokenA)) === 0,
-    "the comment survived",
+    "test_a: deleting their own comment is denied",
+    isDenied(deleteOwnComment),
+    describe(deleteOwnComment),
+  );
+  check(
+    "test_a's comment survives their own delete attempt",
+    (await countRows(`comment_thread?id=eq.${commentId}`, tokenA)) === 1,
+    "the comment is gone",
   );
 
   const deleteOwnPost = await rest(`posts?id=eq.${namedPostA}`, {
     method: "DELETE",
     token: tokenA,
   });
-  check("test_a: deleting their own post works", deleteOwnPost.ok, describe(deleteOwnPost));
+  check("test_a: deleting their own post is denied", isDenied(deleteOwnPost), describe(deleteOwnPost));
   check(
-    "test_a's post is really gone",
-    (await countRows(`post_feed?id=eq.${namedPostA}`, tokenA)) === 0,
-    "the post survived",
+    "test_a's post survives their own delete attempt",
+    (await countRows(`post_feed?id=eq.${namedPostA}`, tokenA)) === 1,
+    "the post is gone",
   );
 
-  console.log("\n5. Signed out requests read nothing");
+  // The moderation RPC is the only route to a deletion, so it has to refuse a
+  // student too -- otherwise the grants above would be theatre.
+  for (const [label, body] of [
+    ["a post", { p_kind: "post", p_id: namedPostA, p_reason: "not mine to remove" }],
+    ["a comment", { p_kind: "comment", p_id: commentId, p_reason: "not mine to remove" }],
+  ]) {
+    const rpc = await rest("rpc/hapus_konten", { method: "POST", token: tokenA, body });
+    check(
+      `test_a: the moderation RPC refuses to delete ${label}`,
+      isDenied(rpc),
+      describe(rpc),
+    );
+  }
 
+  check(
+    "the refused RPC deleted nothing",
+    (await countRows(`post_feed?id=eq.${namedPostA}`, tokenA)) === 1 &&
+      (await countRows(`comment_thread?id=eq.${commentId}`, tokenA)) === 1,
+    "content is missing after a refused RPC",
+  );
+
+  console.log("\n5. Signed out: the feed is public, everything behind it is not");
+
+  // v2 opened the class feed to anybody, so this is the one surface a signed-out
+  // visitor gets. What must still hold is that it exposes no author id and still
+  // anonymises an anonymous post: the feed being public is a product decision,
+  // not a licence to unmask anybody.
+  const anonFeed = await rest("post_feed?select=*", {});
+  const anonFeedRows = Array.isArray(anonFeed.body) ? anonFeed.body : [];
+  check(
+    "signed out: post_feed returns rows",
+    anonFeed.ok && anonFeedRows.some((row) => row.id === anonPostA),
+    describe(anonFeed),
+  );
+  check(
+    "signed out: an anonymous post still reads as Anonim",
+    anonFeedRows.find((row) => row.id === anonPostA)?.author_name === "Anonim",
+    describe(anonFeed),
+  );
+  check(
+    "signed out: the feed exposes no author id",
+    anonFeedRows.every((row) => !("user_id" in row)),
+    describe(anonFeed),
+  );
+
+  // Everything that is not a public read surface stays shut.
   for (const [label, path] of [
-    ["post_feed", "post_feed?select=id"],
     ["posts", "posts?select=id"],
+    ["comments", "comments?select=id"],
+    ["guest_posts", "guest_posts?select=id"],
+    ["guest_comments", "guest_comments?select=id"],
+    ["reports", "reports?select=id"],
+    ["moderation_logs", "moderation_logs?select=id"],
+    ["admin_reports", "admin_reports?select=id"],
   ]) {
     const result = await rest(path, {});
     const exposed = result.ok && Array.isArray(result.body) && result.body.length > 0;
@@ -349,6 +691,64 @@ try {
     describe(meSignedOut),
   );
 
+  // A signed-out visitor can post, and only text: `guest_posts` grants INSERT on
+  // `(id, content)` and nothing else, so an author column is not even nameable.
+  const guestPostId = crypto.randomUUID();
+  const guestPost = await rest("guest_posts", {
+    method: "POST",
+    body: { id: guestPostId, content: "postingan tamu dari test_rls" },
+  });
+  check("signed out: posting as a guest works", guestPost.ok, describe(guestPost));
+  guestFixtures.push(guestPostId);
+
+  const guestRead = await rest(`guest_posts?id=eq.${guestPostId}`, {});
+  check("signed out: a guest post cannot be read back", !guestRead.ok, describe(guestRead));
+
+  const guestForgery = await rest("guest_posts", {
+    method: "POST",
+    body: { id: crypto.randomUUID(), content: "meniru", anonymous: false },
+  });
+  check(
+    "signed out: a guest post cannot be given an anonymity flag",
+    !guestForgery.ok,
+    describe(guestForgery),
+  );
+
+  // Guest content is reportable like anything else, which is what keeps an
+  // anonymous post from being the one thing in the class nobody can hold to
+  // account. Reports need a reporter, so this is a member action.
+  const memberReportsGuest = await rest("rpc/buat_laporan", {
+    method: "POST",
+    token: tokenA,
+    body: {
+      p_post_id: guestPostId,
+      p_comment_id: null,
+      p_reason: "spam",
+      p_description: "dari test_rls",
+    },
+  });
+  check("a student can report a guest post", memberReportsGuest.ok, describe(memberReportsGuest));
+
+  const guestReportsContent = await rest("rpc/buat_laporan", {
+    method: "POST",
+    body: {
+      p_post_id: namedPostA,
+      p_comment_id: null,
+      p_reason: "spam",
+      p_description: null,
+    },
+  });
+  check("signed out: reporting is refused", !guestReportsContent.ok, describe(guestReportsContent));
+
+  // The guest fixture is anonymous by construction, so only the admin view may
+  // read it and a student gets zero rows from that view.
+  const studentQueue = await rest("admin_reports?post_id=eq.${guestPostId}", { token: tokenA });
+  check(
+    "signed in as a student: the admin queue exposes no rows",
+    !(studentQueue.ok && Array.isArray(studentQueue.body) && studentQueue.body.length > 0),
+    describe(studentQueue),
+  );
+
   console.log(`\n✓ ${passed} assertions passed.\n`);
 } catch (error) {
   // `process.exitCode` rather than `process.exit`, so the `finally` below still
@@ -356,8 +756,18 @@ try {
   console.error(`\n✗ ${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
 } finally {
+  // Guest fixtures first: a report on one points at test_a, so removing the users
+  // drops the report but not the content it pointed at.
+  for (const id of guestFixtures) {
+    await request(`/rest/v1/guest_posts?id=eq.${id}`, {
+      method: "DELETE",
+      key: secretKey,
+      base: url,
+    });
+  }
   if (created.length > 0) {
     await cleanup();
     console.log("Cleaned up the throwaway users (cascade removed their content).");
   }
+  if (guestFixtures.length > 0) console.log("Cleaned up the guest post fixture.");
 }

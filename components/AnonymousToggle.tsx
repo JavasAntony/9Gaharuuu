@@ -7,17 +7,20 @@ export function AnonymousToggle({
   label = "Kirim secara Anonim",
   hint = "Namamu tidak akan muncul di feed.",
   name = "anonymous",
+  compact = false,
 }: {
   defaultChecked?: boolean;
   label?: string;
   hint?: string;
   name?: string;
+  /** Drops the hint line and tightens the spacing, for the inline composers. */
+  compact?: boolean;
 }) {
   const [checked, setChecked] = useState(defaultChecked);
   const id = useId();
 
   return (
-    <div className="flex items-start gap-3">
+    <div className={`flex items-start gap-3 ${compact ? "-mt-1" : ""}`}>
       <button
         type="button"
         id={id}
@@ -39,8 +42,8 @@ export function AnonymousToggle({
       <input type="hidden" name={name} value={checked ? "true" : "false"} />
 
       <label htmlFor={id} className="cursor-pointer text-sm leading-snug">
-        <span className="font-medium">{label}</span>
-        {hint ? <span className="block text-muted">{hint}</span> : null}
+        <span className={compact ? "text-xs" : "font-medium"}>{label}</span>
+        {hint && !compact ? <span className="block text-muted">{hint}</span> : null}
       </label>
     </div>
   );
